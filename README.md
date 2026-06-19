@@ -1,6 +1,3 @@
-# CA-The-Signing-Authority-
-Understanding certificates, CAs, digital signatures, and the trust chain behind HTTPS.
-
 
 # TLS Certificates Explained From Scratch
 
