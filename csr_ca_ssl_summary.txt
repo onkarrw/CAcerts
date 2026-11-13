@@ -1,0 +1,209 @@
+SSL/TLS CERTIFICATE AND CSR – CHAT SUMMARY
+
+1. What is a CSR?
+
+CSR = Certificate Signing Request.
+
+A client/server generates a private key and uses it to create a CSR. The
+CSR contains the server’s public key and identity details, such as: -
+Common Name (CN), usually the server’s DNS name - Organization and
+location details - Optional Subject Alternative Names (SANs)
+
+The CSR is sent to a Certificate Authority (CA) for validation and
+signing.
+
+2. Generate the server’s private key
+
+Command: openssl genrsa -out server.key 2048
+
+Explanation: - openssl: OpenSSL command-line utility. - genrsa:
+Generates an RSA private key. - -out server.key: Writes the key to
+server.key. - 2048: RSA key size in bits.
+
+Other commonly used RSA key sizes: - 2048 bits: Standard and widely
+supported. - 3072 bits: Larger security margin. - 4096 bits: Larger key
+and more computational overhead.
+
+2049 bits is technically valid, but offers no practical advantage over
+2048 bits. Prefer standard sizes such as 2048, 3072, or 4096.
+
+Keep server.key private. Never send it to the CA.
+
+3. Generate the CSR
+
+Command: openssl req -new -key server.key -out server.csr
+
+Explanation: - req: OpenSSL certificate request command. - -new: Creates
+a new request. - -key server.key: Uses the server’s private key. - -out
+server.csr: Saves the CSR.
+
+OpenSSL asks for identity information. The Common Name should normally
+be the server’s DNS name, for example sso.example.com.
+
+For modern TLS certificates, include Subject Alternative Names (SANs)
+for all DNS names/IP addresses the certificate must cover. The CA should
+validate and issue the SANs; do not blindly trust requested names.
+
+Inspect the CSR: openssl req -in server.csr -noout -text
+
+4. What is a CA?
+
+A Certificate Authority (CA) validates identities and signs
+certificates.
+
+A CA has its own key pair: - ca.key: CA private signing key. Keep it
+highly protected. - ca.crt: CA certificate containing the CA’s public
+key and identity.
+
+The CA certificate lets clients verify signatures made by the CA’s
+private key. Clients must trust the CA certificate (or a chain leading
+to a trusted root) for the issued server certificates to be trusted.
+
+5. Create a simple lab CA
+
+Generate the CA private key: openssl genrsa -out ca.key 4096
+
+Create a self-signed CA certificate: openssl req -x509 -new -key ca.key
+-sha256 -days 3650 -out ca.crt
+
+This is a basic lab example. A production CA needs appropriate CA
+extensions, secure key storage, policies, controlled issuance, serial
+number management, and revocation handling. A production root CA key is
+commonly kept offline, with an intermediate CA used for issuance.
+
+6. CA signs the client’s CSR
+
+The client sends server.csr to the CA. The client does NOT send
+server.key.
+
+Basic lab signing command: openssl x509 -req
+-in server.csr
+-CA ca.crt
+-CAkey ca.key
+-CAcreateserial
+-out server.crt
+-days 365
+-sha256
+
+Explanation: - x509: X.509 certificate operations. - -req: Input is a
+CSR. - -in server.csr: Reads the client’s CSR. - -CA ca.crt: CA
+certificate. - -CAkey ca.key: CA private key used to sign. -
+-CAcreateserial: Creates a serial-number file if needed. - -out
+server.crt: Writes the issued certificate. - -days 365: Certificate
+validity period. - -sha256: Uses SHA-256 as the signing digest.
+
+IMPORTANT: This command reads server.csr; it does NOT modify or replace
+it. It creates a separate output file, server.crt.
+
+For production issuance, use a CA configuration/tooling that enforces
+certificate profiles and validates requested SANs, key usage, extended
+key usage, validity, and identity. The simple command above is for
+learning/lab use and does not by itself implement a complete CA process.
+
+7. Verify the issued certificate
+
+View certificate details: openssl x509 -in server.crt -noout -text
+
+Verify it against the CA certificate: openssl verify -CAfile ca.crt
+server.crt
+
+Expected lab result: server.crt: OK
+
+8. Why are both server.crt and ca.crt needed?
+
+server.crt: - The server’s issued certificate. - Contains the server’s
+public key and identity. - Contains the CA’s digital signature.
+
+ca.crt: - The CA’s certificate, containing the CA’s public key. - Used
+by clients to verify the CA’s signature on server.crt. - Must be trusted
+by the client, directly or through a trusted chain.
+
+Analogy: - server.crt is like an identity card. - ca.crt provides the
+trusted authority’s information needed to verify that the identity card
+was issued by that authority.
+
+9. HTTPS/TLS connection flow
+
+1.  Browser connects to the server over HTTPS.
+2.  Server sends its server certificate (and required intermediate
+    certificates, if applicable).
+3.  Browser builds and verifies the certificate chain against its
+    trusted CA store.
+4.  Browser checks the hostname, validity dates, and other certificate
+    requirements.
+5.  If verification succeeds, the TLS handshake continues.
+
+A self-created lab CA is not automatically trusted by browsers. Install
+ca.crt in the appropriate OS/browser trust store for testing. Never
+install an untrusted CA certificate just to bypass a warning.
+
+10. Nginx configuration
+
+For a simple setup: server { listen 443 ssl; server_name
+sso.example.com;
+
+        ssl_certificate     /etc/nginx/ssl/server.crt;
+        ssl_certificate_key /etc/nginx/ssl/server.key;
+    }
+
+If an intermediate CA certificate is required, the certificate file
+configured with ssl_certificate should normally contain the server
+certificate followed by the intermediate certificate(s), in PEM format.
+
+Example: cat server.crt intermediate.crt > fullchain.crt
+
+Then configure: ssl_certificate /etc/nginx/ssl/fullchain.crt;
+ssl_certificate_key /etc/nginx/ssl/server.key;
+
+The root CA certificate is generally not sent by the server. Clients
+should already trust the root CA.
+
+11. One CA can issue certificates for many servers
+
+A CA does NOT normally generate a new ca.key and ca.crt for every
+server.
+
+The CA maintains its CA key pair and can use it to sign many CSRs: -
+Server A sends server-a.csr; CA issues server-a.crt. - Server B sends
+server-b.csr; CA issues server-b.crt. - Both certificates can chain to
+the same CA.
+
+Each server has its own private key and certificate: - Server A:
+server-a.key and server-a.crt - Server B: server-b.key and server-b.crt
+
+The CA’s ca.crt can be trusted once by clients, and then used to
+validate certificates issued by that CA, subject to certificate
+constraints and policy.
+
+The CA’s ca.key is NEVER shared with servers or clients.
+
+12. File ownership and sharing
+
+Client/server: - server.key: Keep private on the server. - server.csr:
+Send to the CA. - server.crt: Receive from the CA. - ca.crt:
+Obtain/install as a trusted CA certificate when needed.
+
+CA: - ca.key: Keep secret and strongly protected. - ca.crt: Distribute
+as the CA’s public certificate. - server.csr: Receive and inspect;
+validate identity before issuing. - server.crt: Return to the requesting
+server.
+
+QUICK FLOW
+
+SERVER: Generate server.key | Generate server.csr | Send server.csr to
+CA | Receive server.crt (and required chain) | Configure Nginx with
+server.key + server certificate chain
+
+CA: Maintain ca.key + ca.crt | Receive and validate server.csr | Sign
+CSR using CA private key | Return server.crt (and required intermediate
+chain)
+
+CORE TAKEAWAY
+
+One CA identity can issue certificates for many servers:
+
+    One CA -> many CSRs -> many signed server certificates
+
+The server’s private key stays with the server. The CA signs using its
+own private key. Clients use a trusted CA certificate/chain to verify
+the issued server certificate.
